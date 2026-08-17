@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="ur" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Records — Vertox CRM</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/api.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/vendor/xlsx.full.min.js"></script>
+<script src="js/vendor/jspdf.umd.min.js"></script>
+<script src="js/vendor/jspdf.plugin.autotable.min.js"></script>
+<script>
+  requireAuthPage();
+  const params = new URLSearchParams(location.search);
+  const moduleKey = params.get('module') || 'contacts';
+  renderLayout('module-' + moduleKey, 'Loading...', '');
+</script>
+
+<template id="tpl">
+  <div class="toolbar">
+    <div class="search-box"><input class="input" id="searchBox" placeholder="Search records..." onkeydown="if(event.key==='Enter')applyFilters()"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <input class="input" type="date" id="fromDate" title="From date" style="width:150px;">
+      <span style="color:var(--ink-faint);font-size:12.5px;">to</span>
+      <input class="input" type="date" id="toDate" title="To date" style="width:150px;">
+      <select class="select" id="statusFilter" style="width:150px;">
+        <option value="">All statuses</option>
+        <option value="New">New</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Completed">Completed</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="applyFilters()">Apply</button>
+      <button class="btn btn-outline btn-sm" onclick="clearFilters()">Clear</button>
+      <select class="select" id="savedFilterSelect" style="width:170px;" onchange="loadSavedFilter(this.value)">
+        <option value="">Saved filters...</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="saveCurrentFilter()">💾 Save Filter</button>
+      <button class="btn btn-outline btn-sm hidden" id="deleteFilterBtn" onclick="deleteSelectedFilter()">🗑</button>
+    </div>
+    <button class="btn btn-outline" id="exportBtn" onclick="exportAllRecords()">Export CSV</button>
+    <button class="btn btn-outline" id="exportExcelBtn" onclick="exportExcelRecords()">Export Excel</button>
+    <button class="btn btn-outline" id="exportPdfBtn" onclick="exportPdfRecords()">Export PDF</button>
+    <button class="btn btn-outline" id="importExcelBtn" onclick="document.getElementById('importExcelFile').click()">Import Excel</button>
+    <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="display:none" onchange="importExcelRecords(this.files[0])">
+    <button class="btn btn-primary" onclick="openRecordModal()">+ New Record</button>
+  </div>
+  <div class="card">
+    <table>
+      <thead id="tableHead"></thead>
+      <tbody id="recordsBody"></tbody>
+    </table>
+  </div>
+</template>
+
+<div class="modal-overlay hidden" id="recModalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="recModalTitle">New Record</div>
+      <button class="close-x" onclick="closeRecordModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="dynamicFormArea"></div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeRecordModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRecord()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="volSummaryOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="volSummaryTitle">Attendance Summary</div>
+      <button class="close-x" onclick="document.getElementById('volSummaryOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body" id="volSummaryBody">Loading...</div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('volSummaryOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="evtCheckInOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="evtCheckInTitle">Event Check-In</div>
+      <button class="close-x" onclick="document.getElementById('evtCheckInOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body" id="evtCheckInBody">Loading...</div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('evtCheckInOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="donLifecycleOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="donLifecycleTitle">Donation Lifecycle</div>
+      <button class="close-x" onclick="document.getElementById('donLifecycleOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body" id="donLifecycleBody">Loading...</div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('donLifecycleOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="grtBudgetOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="grtBudgetTitle">Grant Budget Utilization</div>
+      <button class="close-x" onclick="document.getElementById('grtBudgetOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body" id="grtBudgetBody">Loading...</div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('grtBudgetOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="attachOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="attachTitle">Documents &amp; Attachments</div>
+      <button class="close-x" onclick="document.getElementById('attachOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+        <select class="select" id="attachCategory" style="width:170px;">
+          <option>Contract</option><option>Receipt</option><option>ID Proof</option>
+          <option>Report</option><option>Photo</option><option>Correspondence</option><option selected>Other</option>
+        </select>
+        <input type="file" id="attachFileInput" style="flex:1;min-width:180px;">
+        <button class="btn btn-primary btn-sm" id="attachUploadBtn" onclick="uploadAttachment()">Upload</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:10px;">
+        Re-uploading a file with the same name creates a new version instead of a duplicate. Max 20MB. Allowed: pdf, doc/docx, xls/xlsx, ppt/pptx, csv, txt, images, zip.
+      </div>
+      <div id="attachDocList">Loading...</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('attachOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="approvalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="approvalTitle">Approval Workflow</div>
+      <button class="close-x" onclick="document.getElementById('approvalOverlay').classList.add('hidden')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="approvalHistory" style="margin-bottom:16px;"></div>
+      <div id="approvalStartForm">
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px;">Start a new approval request</div>
+        <div class="field"><label class="label">Title (optional)</label><input class="input" id="apvTitle" placeholder="e.g. Refund approval"></div>
+        <div class="field">
+          <label class="label">Approvers, in order — step 2 unlocks only after step 1 approves</label>
+          <div id="apvApproverRows"></div>
+          <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="addApproverRow()">+ Add approver step</button>
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="startApprovalRequest()">Start Approval Request</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="document.getElementById('approvalOverlay').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('pageContent').innerHTML = document.getElementById('tpl').innerHTML;
+  let moduleDef = null, records = [];
+  // Populated once per page load: refCache['households'] = {12: 'Ahmed Family', ...}
+  // usersCache = {5: 'Ali Raza', ...} — used to render reference/user_select
+  // fields as friendly dropdowns and to show a readable label instead of a
+  // raw numeric ID in the table and record view.
+  let refCache = {};
+  let usersCache = {};
+
+  async function preloadReferenceData() {
+    const refModules = new Set();
+    let needsUsers = false;
+    moduleDef.fields.forEach(f => {
+      if (f.FieldType === 'reference' && f.Config?.refModule) refModules.add(f.Config.refModule);
+      if (f.FieldType === 'user_select') needsUsers = true;
+    });
+    await Promise.all([
+      ...Array.from(refModules).map(async (rm) => {
+        if (refCache[rm]) return;
+        try {
+          const recs = await api('/records/' + rm);
+          refCache[rm] = Object.fromEntries(recs.map(r => [r.recordId, r.title || ('#' + r.recordId)]));
+        } catch (e) { refCache[rm] = {}; }
+      }),
+      needsUsers && !Object.keys(usersCache).length ? (async () => {
+        try {
+          const users = await api('/users/assignable');
+          usersCache = Object.fromEntries(users.map(u => [u.UserId, u.FullName || u.Username]));
+        } catch (e) { usersCache = {}; }
+      })() : Promise.resolve()
+    ]);
+  }
+
+  async function load() {
+    try {
+      const modules = await api('/modules');
+      moduleDef = modules.find(m => m.ModuleKey === moduleKey);
+      if (!moduleDef) { toast('Module not found', 'error'); return; }
+
+      document.querySelector('.page-title').textContent = moduleDef.Label;
+      document.querySelector('.page-sub').textContent = 'Manage ' + moduleDef.Label.toLowerCase() + ' — fully dynamic fields';
+
+      records = await api('/records/' + moduleKey);
+      await preloadReferenceData();
+      renderTable();
+      loadSavedFiltersList();
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ===== Volunteer Attendance Summary (only shown on the volunteers module) =====
+  // Pulls the live computed summary from GET /shifts/summary/:id (backend
+  // computes total hours/shifts straight from VolunteerShifts — see
+  // shiftController.volunteerSummary), rather than trusting a manually
+  // typed "hours contributed" field which can drift out of date.
+  async function showVolunteerSummary(recordId, title) {
+    const overlay = document.getElementById('volSummaryOverlay');
+    const body = document.getElementById('volSummaryBody');
+    document.getElementById('volSummaryTitle').textContent = 'Attendance — ' + (title || '');
+    overlay.classList.remove('hidden');
+    body.innerHTML = 'Loading...';
+    try {
+      const s = await api('/shifts/summary/' + recordId);
+      body.innerHTML = `
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-card"><div class="stat-num">${s.totalHours}</div><div class="stat-label">Total Hours</div></div>
+          <div class="stat-card"><div class="stat-num">${s.completedShifts}</div><div class="stat-label">Completed Shifts</div></div>
+          <div class="stat-card"><div class="stat-num">${s.upcomingShifts}</div><div class="stat-label">Upcoming Shifts</div></div>
+          <div class="stat-card"><div class="stat-num">${s.noShowShifts}</div><div class="stat-label">No-Shows</div></div>
+        </div>
+        <div style="font-weight:600;margin-bottom:8px;">Recent Shifts</div>
+        ${s.recentShifts.length ? `
+          <table><thead><tr><th>Date</th><th>Time</th><th>Role</th><th>Status</th></tr></thead>
+          <tbody>${s.recentShifts.map(sh => `
+            <tr><td>${new Date(sh.ShiftDate).toLocaleDateString()}</td><td>${esc(sh.StartTime)}–${esc(sh.EndTime)}</td><td>${esc(sh.Role || '—')}</td><td>${esc(sh.Status)}</td></tr>
+          `).join('')}</tbody></table>
+        ` : '<div class="empty">No shifts logged yet</div>'}
+      `;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">${esc(e.message || 'Failed to load attendance summary')}</div>`;
+    }
+  }
+
+  // ===== Event Check-In / Post-Event Report =====
+  let currentCheckInEventId = null;
+
+  async function showEventCheckIns(eventId, title) {
+    currentCheckInEventId = eventId;
+    const overlay = document.getElementById('evtCheckInOverlay');
+    document.getElementById('evtCheckInTitle').textContent = 'Check-In — ' + (title || '');
+    overlay.classList.remove('hidden');
+    await refreshEventCheckIns();
+  }
+
+  async function refreshEventCheckIns() {
+    const body = document.getElementById('evtCheckInBody');
+    body.innerHTML = 'Loading...';
+    try {
+      const [report, checkins] = await Promise.all([
+        api('/events/' + currentCheckInEventId + '/report'),
+        api('/events/' + currentCheckInEventId + '/checkins')
+      ]);
+      body.innerHTML = `
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-card"><div class="stat-num">${report.actualAttendees}</div><div class="stat-label">Checked In</div></div>
+          <div class="stat-card"><div class="stat-num">${report.expectedAttendees || '—'}</div><div class="stat-label">Expected</div></div>
+          <div class="stat-card"><div class="stat-num">${report.attendanceRate !== null ? report.attendanceRate + '%' : '—'}</div><div class="stat-label">Attendance Rate</div></div>
+          <div class="stat-card ${report.overBudget ? 'accent-red' : ''}"><div class="stat-num">${formatCurrency(report.variance)}</div><div class="stat-label">${report.overBudget ? 'Over Budget' : 'Budget Remaining'}</div></div>
+        </div>
+        <form onsubmit="submitCheckIn(event)" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input class="input" id="ciName" placeholder="Attendee name" style="flex:1;min-width:140px;" required>
+          <input class="input" id="ciPhone" placeholder="Phone (optional)" style="width:140px;">
+          <button class="btn btn-primary btn-sm" type="submit">+ Check In</button>
+        </form>
+        ${checkins.length ? `
+          <table><thead><tr><th>Name</th><th>Phone</th><th>Checked In</th><th></th></tr></thead>
+          <tbody>${checkins.map(c => `
+            <tr>
+              <td>${esc(c.AttendeeName)}</td><td>${esc(c.Phone || '—')}</td>
+              <td>${new Date(c.CheckedInAt).toLocaleString()}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="removeCheckIn(${c.CheckInId})">Remove</button></td>
+            </tr>
+          `).join('')}</tbody></table>
+        ` : '<div class="empty">No check-ins yet</div>'}
+      `;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">${esc(e.message || 'Failed to load check-ins')}</div>`;
+    }
+  }
+
+  async function submitCheckIn(ev) {
+    ev.preventDefault();
+    const name = document.getElementById('ciName').value.trim();
+    const phone = document.getElementById('ciPhone').value.trim();
+    if (!name) return;
+    try {
+      await api('/events/' + currentCheckInEventId + '/checkins', { method: 'POST', body: { attendeeName: name, phone } });
+      toast('Checked in', 'success');
+      await refreshEventCheckIns();
+    } catch (e) {
+      toast(e.message || 'Check-in failed', 'error');
+    }
+  }
+
+  async function removeCheckIn(checkInId) {
+    if (!confirm('Remove this check-in?')) return;
+    try {
+      await api('/events/checkins/' + checkInId, { method: 'DELETE' });
+      await refreshEventCheckIns();
+    } catch (e) {
+      toast(e.message || 'Failed to remove', 'error');
+    }
+  }
+
+  // ===== Grant Budget Utilization =====
+  let currentBudgetGrantId = null;
+
+  async function showGrantBudget(grantId, title) {
+    currentBudgetGrantId = grantId;
+    const overlay = document.getElementById('grtBudgetOverlay');
+    document.getElementById('grtBudgetTitle').textContent = 'Budget — ' + (title || '');
+    overlay.classList.remove('hidden');
+    await refreshGrantBudget();
+  }
+
+  async function refreshGrantBudget() {
+    const body = document.getElementById('grtBudgetBody');
+    body.innerHTML = 'Loading...';
+    try {
+      const s = await api('/grants/' + currentBudgetGrantId + '/budget');
+      body.innerHTML = `
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-card"><div class="stat-num">${formatCurrency(s.approvedAmount)}</div><div class="stat-label">Approved</div></div>
+          <div class="stat-card"><div class="stat-num">${formatCurrency(s.totalSpent)}</div><div class="stat-label">Spent</div></div>
+          <div class="stat-card ${s.overBudget ? 'accent-red' : ''}"><div class="stat-num">${formatCurrency(s.remaining)}</div><div class="stat-label">Remaining</div></div>
+          <div class="stat-card"><div class="stat-num">${s.utilizationPercent !== null ? s.utilizationPercent + '%' : '—'}</div><div class="stat-label">Utilized</div></div>
+        </div>
+        <form onsubmit="submitGrantExpense(event)" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input class="input" id="gexCategory" placeholder="Category (e.g. Supplies)" style="width:150px;" required>
+          <input class="input" id="gexAmount" type="number" placeholder="Amount" style="width:110px;" required>
+          <input class="input" id="gexDate" type="date" style="width:150px;" required value="${new Date().toISOString().slice(0,10)}">
+          <input class="input" id="gexDesc" placeholder="Description (optional)" style="flex:1;min-width:140px;">
+          <button class="btn btn-primary btn-sm" type="submit">+ Add Expense</button>
+        </form>
+        ${s.expenses.length ? `
+          <table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+          <tbody>${s.expenses.map(e => `
+            <tr>
+              <td>${new Date(e.ExpenseDate).toLocaleDateString()}</td>
+              <td>${esc(e.Category)}</td><td>${esc(e.Description || '—')}</td>
+              <td>${formatCurrency(e.Amount)}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="removeGrantExpense(${e.ExpenseId})">Remove</button></td>
+            </tr>
+          `).join('')}</tbody></table>
+        ` : '<div class="empty">No expenses recorded yet</div>'}
+      `;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">${esc(e.message || 'Failed to load budget')}</div>`;
+    }
+  }
+
+  async function submitGrantExpense(ev) {
+    ev.preventDefault();
+    const category = document.getElementById('gexCategory').value.trim();
+    const amount = document.getElementById('gexAmount').value;
+    const expenseDate = document.getElementById('gexDate').value;
+    const description = document.getElementById('gexDesc').value.trim();
+    if (!category || !amount || !expenseDate) return;
+    try {
+      await api('/grants/' + currentBudgetGrantId + '/expenses', { method: 'POST', body: { category, amount, expenseDate, description } });
+      toast('Expense recorded', 'success');
+      await refreshGrantBudget();
+    } catch (e) {
+      toast(e.message || 'Failed to record expense', 'error');
+    }
+  }
+
+  async function removeGrantExpense(expenseId) {
+    if (!confirm('Remove this expense? (Note: any linked ledger entry stays — adjust manually if needed)')) return;
+    try {
+      await api('/grants/expenses/' + expenseId, { method: 'DELETE' });
+      await refreshGrantBudget();
+    } catch (e) {
+      toast(e.message || 'Failed to remove expense', 'error');
+    }
+  }
+
+  // ===== Documents & Attachments (generic — every module) =====
+  let currentAttachRecordId = null;
+
+  function showAttachments(recordId, title) {
+    currentAttachRecordId = recordId;
+    document.getElementById('attachTitle').textContent = 'Documents — ' + (title || '');
+    document.getElementById('attachFileInput').value = '';
+    document.getElementById('attachOverlay').classList.remove('hidden');
+    loadAttachmentList();
+  }
+
+  async function loadAttachmentList() {
+    const el = document.getElementById('attachDocList');
+    el.innerHTML = 'Loading...';
+    try {
+      const data = await api('/attachments/record/' + currentAttachRecordId);
+      if (!data.documents.length) { el.innerHTML = '<div class="empty">No files uploaded yet</div>'; return; }
+      el.innerHTML = data.documents.map(doc => `
+        <div style="padding:10px 0;border-bottom:1px solid var(--line);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <strong>${esc(doc.originalName)}</strong>
+              <span class="badge" style="margin-left:6px;">${esc(doc.category)}</span>
+              ${doc.versions.length > 1 ? `<span style="font-size:11.5px;color:var(--ink-faint);margin-left:6px;">v${doc.latest.versionNumber} (${doc.versions.length} versions)</span>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-outline btn-sm" onclick="downloadAttachment(${doc.latest.attachmentId}, '${esc(doc.originalName).replace(/'/g, "\\'")}')">Download</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteAttachmentVersion(${doc.latest.attachmentId})">Delete</button>
+            </div>
+          </div>
+          ${doc.versions.length > 1 ? `
+            <div style="margin-top:6px;font-size:12px;color:var(--ink-soft);">
+              ${doc.versions.map(v => `
+                <div style="display:flex;justify-content:space-between;padding:3px 0;">
+                  <span>v${v.versionNumber} — ${esc(v.uploadedByName || 'Unknown')} — ${new Date(v.createdAt).toLocaleDateString()} — ${(v.sizeBytes/1024).toFixed(0)}KB</span>
+                  <a href="#" onclick="downloadAttachment(${v.attachmentId}, '${esc(doc.originalName).replace(/'/g, "\\'")}'); return false;">Download</a>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `).join('');
+    } catch (e) {
+      el.innerHTML = `<div class="empty">${esc(e.message || 'Failed to load documents')}</div>`;
+    }
+  }
+
+  async function uploadAttachment() {
+    const input = document.getElementById('attachFileInput');
+    const category = document.getElementById('attachCategory').value;
+    const file = input.files[0];
+    if (!file) { toast('Choose a file first', 'error'); return; }
+    const btn = document.getElementById('attachUploadBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Uploading...';
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('category', category);
+      const headers = {};
+      if (Store.accessToken) headers['Authorization'] = 'Bearer ' + Store.accessToken;
+      const res = await fetch('/api/attachments/record/' + currentAttachRecordId, { method: 'POST', headers, body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Upload failed');
+      toast(data.message || 'File uploaded', 'success');
+      input.value = '';
+      await loadAttachmentList();
+    } catch (e) {
+      toast(e.message || 'Upload failed', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+
+  // Bearer-token download: a plain <a href> can't attach an Authorization
+  // header, so fetch the file as a blob (same pattern as exportAllRecords)
+  // and hand it to the browser's native download.
+  async function downloadAttachment(attachmentId, filename) {
+    try {
+      const headers = {};
+      if (Store.accessToken) headers['Authorization'] = 'Bearer ' + Store.accessToken;
+      const res = await fetch('/api/attachments/' + attachmentId + '/download', { headers });
+      if (!res.ok) throw new Error('Download failed (' + res.status + ')');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename || 'file';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(e.message || 'Download failed', 'error');
+    }
+  }
+
+  async function deleteAttachmentVersion(attachmentId) {
+    if (!confirm('Delete this file? This cannot be undone.')) return;
+    try {
+      await api('/attachments/' + attachmentId, { method: 'DELETE' });
+      toast('File deleted', 'success');
+      await loadAttachmentList();
+    } catch (e) {
+      toast(e.message || 'Failed to delete file', 'error');
+    }
+  }
+
+  // ===== Approval Workflow (generic — every module) =====
+  let currentApprovalRecordId = null;
+  let approvalUsersCache = null; // {userId: fullName}, loaded once and reused across opens
+
+  async function showApprovals(recordId, title) {
+    currentApprovalRecordId = recordId;
+    document.getElementById('approvalTitle').textContent = 'Approvals — ' + (title || '');
+    document.getElementById('approvalOverlay').classList.remove('hidden');
+    document.getElementById('apvTitle').value = '';
+    document.getElementById('apvApproverRows').innerHTML = '';
+    if (!approvalUsersCache) {
+      try {
+        const users = await api('/users/assignable');
+        approvalUsersCache = Object.fromEntries(users.map(u => [u.UserId, u.FullName || u.Username]));
+      } catch (e) { approvalUsersCache = {}; }
+    }
+    addApproverRow();
+    await loadApprovalHistory();
+  }
+
+  function addApproverRow() {
+    const wrap = document.getElementById('apvApproverRows');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;';
+    const stepNum = wrap.children.length + 1;
+    row.innerHTML = `
+      <span style="font-size:12px;color:var(--ink-faint);width:50px;">Step ${stepNum}</span>
+      <select class="select apv-approver-select" style="flex:1;">
+        <option value="">Select approver...</option>
+        ${Object.entries(approvalUsersCache).map(([id, name]) => `<option value="${id}">${esc(name)}</option>`).join('')}
+      </select>
+      <button type="button" class="btn btn-outline btn-sm" onclick="this.parentElement.remove(); renumberApproverRows();">✕</button>
+    `;
+    wrap.appendChild(row);
+  }
+
+  function renumberApproverRows() {
+    document.querySelectorAll('#apvApproverRows > div').forEach((row, i) => {
+      row.querySelector('span').textContent = 'Step ' + (i + 1);
+    });
+  }
+
+  async function loadApprovalHistory() {
+    const el = document.getElementById('approvalHistory');
+    el.innerHTML = 'Loading...';
+    try {
+      const data = await api('/approvals/record/' + currentApprovalRecordId);
+      const pendingExists = data.requests.some(r => r.OverallStatus === 'Pending');
+      document.getElementById('approvalStartForm').classList.toggle('hidden', pendingExists);
+      if (!data.requests.length) { el.innerHTML = ''; return; }
+
+      const statusColor = { Pending: '#B98900', Approved: '#1B8A5A', Rejected: 'var(--danger)', Cancelled: 'var(--ink-faint)' };
+      el.innerHTML = data.requests.map(r => `
+        <div class="card card-pad" style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong>${esc(r.Title || 'Approval Request')}</strong>
+            <span style="font-weight:700;color:${statusColor[r.OverallStatus] || 'inherit'};">${esc(r.OverallStatus)}</span>
+          </div>
+          <div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;">Requested by ${esc(r.RequestedByName || 'Unknown')} on ${new Date(r.CreatedAt).toLocaleDateString()}</div>
+          ${r.steps.map(s => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line);">
+              <div>
+                <span style="font-size:12.5px;">Step ${s.StepNumber} — ${esc(s.ApproverName || 'Unknown')}</span>
+                ${s.Comments ? `<div style="font-size:11.5px;color:var(--ink-faint);">"${esc(s.Comments)}"</div>` : ''}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="badge" style="color:${statusColor[s.Status] || 'inherit'};">${esc(s.Status)}</span>
+                ${s.Status === 'Pending' && isMyActionableStep(r.steps, s) ? `
+                  <button class="btn btn-primary btn-sm" onclick="actOnApprovalStep(${s.StepId}, 'approve')">Approve</button>
+                  <button class="btn btn-danger btn-sm" onclick="actOnApprovalStep(${s.StepId}, 'reject')">Reject</button>
+                ` : ''}
+              </div>
+            </div>
+          `).join('')}
+          ${r.OverallStatus === 'Pending' && String(r.RequestedBy) === String(Store.user?.userId) ? `
+            <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="cancelApprovalRequest(${r.RequestId})">Cancel Request</button>
+          ` : ''}
+        </div>
+      `).join('');
+    } catch (e) {
+      el.innerHTML = `<div class="empty">${esc(e.message || 'Failed to load approvals')}</div>`;
+    }
+  }
+
+  // A step is "my turn" only if I'm the assigned approver AND every step
+  // before it is already Approved — mirrors the same rule the backend
+  // enforces, so the buttons never promise an action the server will reject.
+  function isMyActionableStep(allSteps, step) {
+    const myId = Store.user?.userId;
+    if (String(step.ApproverUserId) !== String(myId) && Store.user?.role !== 'SuperAdmin') return false;
+    return allSteps.filter(s => s.StepNumber < step.StepNumber).every(s => s.Status === 'Approved');
+  }
+
+  async function startApprovalRequest() {
+    const approverIds = Array.from(document.querySelectorAll('.apv-approver-select'))
+      .map(sel => sel.value).filter(Boolean).map(Number);
+    if (!approverIds.length) { toast('Add at least one approver', 'error'); return; }
+    try {
+      await api('/approvals/record/' + currentApprovalRecordId, {
+        method: 'POST',
+        body: { title: document.getElementById('apvTitle').value.trim() || null, approverUserIds: approverIds }
+      });
+      toast('Approval request started', 'success');
+      await loadApprovalHistory();
+    } catch (e) {
+      toast(e.message || 'Failed to start approval request', 'error');
+    }
+  }
+
+  async function actOnApprovalStep(stepId, action) {
+    const comments = action === 'reject' ? prompt('Reason for rejection (optional):') || '' : '';
+    try {
+      await api('/approvals/steps/' + stepId + '/act', { method: 'POST', body: { action, comments } });
+      toast(action === 'approve' ? 'Approved' : 'Rejected', 'success');
+      await loadApprovalHistory();
+    } catch (e) {
+      toast(e.message || 'Failed to record decision', 'error');
+    }
+  }
+
+  async function cancelApprovalRequest(requestId) {
+    if (!confirm('Cancel this approval request?')) return;
+    try {
+      await api('/approvals/' + requestId, { method: 'DELETE' });
+      toast('Approval request cancelled', 'success');
+      await loadApprovalHistory();
+    } catch (e) {
+      toast(e.message || 'Failed to cancel', 'error');
+    }
+  }
+
+  // ===== Donation Lifecycle (acknowledge / refund / cancel) =====
+  function findRecordById(id) { return records.find(r => String(r.recordId) === String(id)); }
+
+  function showDonationLifecycle(recordId, title) {
+    const overlay = document.getElementById('donLifecycleOverlay');
+    document.getElementById('donLifecycleTitle').textContent = 'Lifecycle — ' + (title || '');
+    overlay.classList.remove('hidden');
+    renderDonationLifecycle(recordId);
+  }
+
+  function renderDonationLifecycle(recordId) {
+    const body = document.getElementById('donLifecycleBody');
+    const rec = findRecordById(recordId);
+    if (!rec) { body.innerHTML = '<div class="empty">Record not found</div>'; return; }
+    const f = rec.fields || {};
+    const status = f.donation_status || 'Pending';
+    const locked = ['Refunded', 'Cancelled'].includes(status);
+
+    body.innerHTML = `
+      <div style="margin-bottom:16px;">
+        <span class="badge">${esc(status)}</span>
+        ${f.acknowledgement_sent_date ? `<div style="margin-top:6px;font-size:12.5px;color:var(--ink-soft);">Acknowledged on ${esc(f.acknowledgement_sent_date)}</div>` : ''}
+        ${f.refund_date ? `<div style="margin-top:6px;font-size:12.5px;color:var(--ink-soft);">Refund: Rs. ${esc(f.refund_amount)} on ${esc(f.refund_date)} — ${esc(f.refund_reason || '')}</div>` : ''}
+      </div>
+      ${locked ? '<div class="empty">No further actions — this donation is ' + esc(status).toLowerCase() + '.</div>' : `
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <button class="btn btn-primary btn-sm" onclick="doAcknowledgeDonation(${recordId})">✓ Mark Acknowledged</button>
+            <span style="font-size:12px;color:var(--ink-faint);margin-left:8px;">Sends a receipt / thank-you confirmation status</span>
+          </div>
+          <div style="border-top:1px solid var(--line);padding-top:14px;">
+            <div style="font-weight:600;margin-bottom:6px;font-size:13px;">Refund this donation</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input class="input" id="refundAmount" type="number" placeholder="Refund amount" style="width:150px;">
+              <input class="input" id="refundReason" placeholder="Reason" style="flex:1;min-width:160px;">
+              <button class="btn btn-danger btn-sm" onclick="doRefundDonation(${recordId})">Process Refund</button>
+            </div>
+          </div>
+          <div style="border-top:1px solid var(--line);padding-top:14px;">
+            <div style="font-weight:600;margin-bottom:6px;font-size:13px;">Cancel this donation</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input class="input" id="cancelReason" placeholder="Cancellation reason" style="flex:1;min-width:160px;">
+              <button class="btn btn-outline btn-sm" onclick="doCancelDonation(${recordId})">Cancel Donation</button>
+            </div>
+          </div>
+        </div>
+      `}
+    `;
+  }
+
+  async function doAcknowledgeDonation(recordId) {
+    try {
+      const res = await api('/donations/' + recordId + '/acknowledge', { method: 'PUT' });
+      findRecordById(recordId).fields = res.fields;
+      toast('Donation acknowledged', 'success');
+      renderDonationLifecycle(recordId);
+    } catch (e) { toast(e.message || 'Failed to acknowledge', 'error'); }
+  }
+
+  async function doRefundDonation(recordId) {
+    const refundAmount = document.getElementById('refundAmount').value;
+    const refundReason = document.getElementById('refundReason').value.trim();
+    if (!refundAmount || !refundReason) { toast('Refund amount and reason are required', 'error'); return; }
+    if (!confirm('Refund Rs. ' + refundAmount + '? This will also record it in the ledger.')) return;
+    try {
+      const res = await api('/donations/' + recordId + '/refund', { method: 'PUT', body: { refundAmount, refundReason } });
+      findRecordById(recordId).fields = res.fields;
+      toast('Refund processed', 'success');
+      renderDonationLifecycle(recordId);
+    } catch (e) { toast(e.message || 'Refund failed', 'error'); }
+  }
+
+  async function doCancelDonation(recordId) {
+    const cancelReason = document.getElementById('cancelReason').value.trim();
+    if (!cancelReason) { toast('Cancellation reason is required', 'error'); return; }
+    if (!confirm('Cancel this donation?')) return;
+    try {
+      const res = await api('/donations/' + recordId + '/cancel', { method: 'PUT', body: { cancelReason } });
+      findRecordById(recordId).fields = res.fields;
+      toast('Donation cancelled', 'success');
+      renderDonationLifecycle(recordId);
+    } catch (e) { toast(e.message || 'Cancel failed', 'error'); }
+  }
+
+  function visibleFields() {
+    return moduleDef.fields.filter(f => f.ShowInList).sort((a,b) => a.SortOrder - b.SortOrder);
+  }
+
+  function renderTable() {
+    const fields = visibleFields();
+    document.getElementById('tableHead').innerHTML = `
+      <tr>
+        ${fields.map(f => `<th>${esc(f.Label)}</th>`).join('')}
+        <th>Status</th><th>Owner</th><th></th>
+      </tr>
+    `;
+    const body = document.getElementById('recordsBody');
+    if (records.length === 0) {
+      body.innerHTML = `<tr><td colspan="${fields.length+3}" class="empty">No records yet — click "New Record" to add one</td></tr>`;
+      return;
+    }
+    body.innerHTML = records.map(r => `
+      <tr>
+        ${fields.map(f => `<td>${formatVal(r.fields[f.FieldKey], f.FieldType, f, r.fields)}</td>`).join('')}
+        <td>${r.status ? `<span class="badge badge-blue">${esc(r.status)}</span>` : '—'}</td>
+        <td>${esc(r.ownerName) || '—'}</td>
+        <td style="text-align:right;">
+          ${moduleKey === 'volunteers' ? `<button class="btn btn-outline btn-sm" data-vol-id="${r.recordId}" data-vol-title="${esc(r.title || '')}" onclick="showVolunteerSummary(this.dataset.volId, this.dataset.volTitle)">Attendance</button>` : ''}
+          ${moduleKey === 'events' ? `<button class="btn btn-outline btn-sm" data-evt-id="${r.recordId}" data-evt-title="${esc(r.title || '')}" onclick="showEventCheckIns(this.dataset.evtId, this.dataset.evtTitle)">Check-In</button>` : ''}
+          ${moduleKey === 'donations' ? `<button class="btn btn-outline btn-sm" data-don-id="${r.recordId}" data-don-title="${esc(r.title || '')}" onclick="showDonationLifecycle(this.dataset.donId, this.dataset.donTitle)">Lifecycle</button>` : ''}
+          ${moduleKey === 'grants' ? `<button class="btn btn-outline btn-sm" data-grt-id="${r.recordId}" data-grt-title="${esc(r.title || '')}" onclick="showGrantBudget(this.dataset.grtId, this.dataset.grtTitle)">Budget</button>` : ''}
+          <button class="btn btn-outline btn-sm" data-att-id="${r.recordId}" data-att-title="${esc(r.title || '')}" onclick="showAttachments(this.dataset.attId, this.dataset.attTitle)">Files</button>
+          <button class="btn btn-outline btn-sm" data-apv-id="${r.recordId}" data-apv-title="${esc(r.title || '')}" onclick="showApprovals(this.dataset.apvId, this.dataset.apvTitle)">Approvals</button>
+          <button class="btn btn-outline btn-sm" onclick='editRecord(${r.recordId})'>Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRecord(${r.recordId})">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function formatVal(v, type, field, recordFields) {
+    if (v === undefined || v === null || v === '') return '—';
+    if (field?.FieldKey === 'gps_latitude') {
+      // Paired longitude comes from the same record's fields, not this
+      // column alone — the map link only makes sense with both.
+      const lng = recordFields ? recordFields['gps_longitude'] : undefined;
+      return `<a href="https://www.google.com/maps?q=${encodeURIComponent(v)},${encodeURIComponent(lng ?? '')}" target="_blank" rel="noopener">${esc(v)} 🗺️</a>`;
+    }
+    if (type === 'reference') {
+      const refModule = field?.Config?.refModule;
+      const label = refModule && refCache[refModule] ? refCache[refModule][v] : null;
+      return label ? esc(label) : '—';
+    }
+    if (type === 'user_select') {
+      const label = usersCache[v];
+      return label ? esc(label) : '—';
+    }
+    if (Array.isArray(v)) return v.length ? esc(v.join(', ')) : '—';
+    if (type === 'checkbox') return v ? 'Yes' : 'No';
+    if (type === 'currency') return formatCurrency(v);
+    if (type === 'url') return `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`;
+    if (type === 'datetime') { const d = new Date(v); return isNaN(d) ? esc(v) : d.toLocaleString(); }
+    return esc(v);
+  }
+
+  function applyFilters() {
+    const q = (document.getElementById('searchBox').value || '').toLowerCase();
+    const from = document.getElementById('fromDate').value;
+    const to = document.getElementById('toDate').value;
+    const status = document.getElementById('statusFilter').value;
+    const fields = visibleFields();
+
+    let filtered = records;
+    if (q) {
+      filtered = filtered.filter(r =>
+        fields.some(f => String(r.fields[f.FieldKey] || '').toLowerCase().includes(q)) ||
+        (r.title || '').toLowerCase().includes(q)
+      );
+    }
+    if (from) {
+      const fromTs = new Date(from).setHours(0, 0, 0, 0);
+      filtered = filtered.filter(r => new Date(r.createdAt).getTime() >= fromTs);
+    }
+    if (to) {
+      const toTs = new Date(to).setHours(23, 59, 59, 999);
+      filtered = filtered.filter(r => new Date(r.createdAt).getTime() <= toTs);
+    }
+    if (status) {
+      filtered = filtered.filter(r => r.status === status);
+    }
+
+    const original = records; records = filtered; renderTable(); records = original;
+  }
+
+  function clearFilters() {
+    document.getElementById('searchBox').value = '';
+    document.getElementById('fromDate').value = '';
+    document.getElementById('toDate').value = '';
+    document.getElementById('statusFilter').value = '';
+    renderTable();
+  }
+
+  // ===== Saved Filters =====
+  // Persisted server-side (per user + module) in dbo.SavedFilters, so the
+  // same saved views follow a user across devices/browsers, not just this
+  // one machine's localStorage.
+  let savedFilters = [];
+
+  async function loadSavedFiltersList() {
+    const select = document.getElementById('savedFilterSelect');
+    try {
+      savedFilters = await api('/saved-filters/' + moduleKey);
+      select.innerHTML = '<option value="">Saved filters...</option>' +
+        savedFilters.map(f => `<option value="${f.filterId}">${esc(f.name)}</option>`).join('');
+    } catch (e) { /* silent — saved filters are a convenience, not critical path */ }
+  }
+
+  function loadSavedFilter(filterId) {
+    const deleteBtn = document.getElementById('deleteFilterBtn');
+    if (!filterId) { deleteBtn.classList.add('hidden'); return; }
+    const f = savedFilters.find(sf => String(sf.filterId) === String(filterId));
+    if (!f) return;
+    deleteBtn.classList.remove('hidden');
+    document.getElementById('searchBox').value = f.filter.search || '';
+    document.getElementById('fromDate').value = f.filter.fromDate || '';
+    document.getElementById('toDate').value = f.filter.toDate || '';
+    document.getElementById('statusFilter').value = f.filter.status || '';
+    applyFilters();
+  }
+
+  async function saveCurrentFilter() {
+    const name = prompt('Name this filter (e.g. "This month, In Progress"):');
+    if (!name || !name.trim()) return;
+    const filter = {
+      search: document.getElementById('searchBox').value || '',
+      fromDate: document.getElementById('fromDate').value || '',
+      toDate: document.getElementById('toDate').value || '',
+      status: document.getElementById('statusFilter').value || ''
+    };
+    try {
+      await api('/saved-filters/' + moduleKey, { method: 'POST', body: { name: name.trim(), filter } });
+      toast('Filter saved', 'success');
+      await loadSavedFiltersList();
+    } catch (e) {
+      toast(e.message || 'Failed to save filter', 'error');
+    }
+  }
+
+  async function deleteSelectedFilter() {
+    const select = document.getElementById('savedFilterSelect');
+    const filterId = select.value;
+    if (!filterId) return;
+    if (!confirm('Delete this saved filter?')) return;
+    try {
+      await api('/saved-filters/single/' + filterId, { method: 'DELETE' });
+      toast('Filter deleted', 'success');
+      document.getElementById('deleteFilterBtn').classList.add('hidden');
+      await loadSavedFiltersList();
+    } catch (e) {
+      toast(e.message || 'Failed to delete filter', 'error');
+    }
+  }
+
+  // Streams the export from the server (see backend recordController.exportRecords)
+  // and hands it to the browser's native download as it arrives, so this
+  // page's own memory use doesn't grow with row count either — the response
+  // body is piped straight into a Blob via the streaming fetch reader rather
+  // than waiting for the whole thing to buffer up front.
+  async function exportAllRecords() {
+    const btn = document.getElementById('exportBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing export...';
+    try {
+      const headers = {};
+      if (Store.accessToken) headers['Authorization'] = 'Bearer ' + Store.accessToken;
+      const res = await fetch('/api/records/' + moduleKey + '/export', { headers });
+      if (!res.ok) throw new Error('Export failed (' + res.status + ')');
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : (moduleKey + '_export.csv');
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast('Export downloaded', 'success');
+    } catch (e) {
+      toast(e.message || 'Export failed', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+
+  // ===== Excel Export (.xlsx) =====
+  // Client-side only — uses the records already loaded on this page (no extra
+  // API call), and the SheetJS vendor lib already bundled in js/vendor.
+  function excelColumns() {
+    return [...moduleDef.fields].sort((a, b) => a.SortOrder - b.SortOrder);
+  }
+
+  function excelCellValue(v, type, field) {
+    if (v === undefined || v === null || v === '') return '';
+    if (type === 'reference') {
+      const refModule = field?.Config?.refModule;
+      const label = refModule && refCache[refModule] ? refCache[refModule][v] : null;
+      return label || '';
+    }
+    if (type === 'user_select') return usersCache[v] || '';
+    if (Array.isArray(v)) return v.join(', ');
+    if (type === 'checkbox') return v ? 'Yes' : 'No';
+    return v;
+  }
+
+  function exportExcelRecords() {
+    const btn = document.getElementById('exportExcelBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing...';
+    try {
+      const cols = excelColumns();
+      const header = [...cols.map(f => f.Label), 'Status', 'Owner', 'Created At'];
+      const rows = records.map(r => [
+        ...cols.map(f => excelCellValue(r.fields[f.FieldKey], f.FieldType, f)),
+        r.status || '',
+        r.ownerName || '',
+        r.createdAt ? new Date(r.createdAt).toLocaleString() : ''
+      ]);
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, (moduleDef.Label || moduleKey).slice(0, 28));
+      XLSX.writeFile(wb, moduleKey + '_export_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      toast('Excel exported', 'success');
+    } catch (e) {
+      toast(e.message || 'Excel export failed', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+
+  // ===== PDF Export =====
+  // Same column set as Excel export, rendered through jsPDF + autotable
+  // (already bundled in vendor/, same libs reports.html uses).
+  function exportPdfRecords() {
+    const btn = document.getElementById('exportPdfBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing...';
+    try {
+      const cols = excelColumns();
+      const header = [...cols.map(f => f.Label), 'Status', 'Owner'];
+      const rows = records.map(r => [
+        ...cols.map(f => excelCellValue(r.fields[f.FieldKey], f.FieldType, f)),
+        r.status || '',
+        r.ownerName || ''
+      ]);
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: header.length > 6 ? 'landscape' : 'portrait' });
+      doc.setFontSize(14);
+      doc.text(`${moduleDef.Label || moduleKey} — Records`, 14, 16);
+      doc.setFontSize(9);
+      doc.setTextColor(120);
+      doc.text(`Generated ${new Date().toLocaleString()} — ${rows.length} record(s)`, 14, 22);
+      doc.autoTable({ head: [header], body: rows, startY: 27, styles: { fontSize: 8 }, headStyles: { fillColor: [27, 99, 196] } });
+      doc.save(moduleKey + '_records_' + new Date().toISOString().slice(0, 10) + '.pdf');
+      toast('PDF exported', 'success');
+    } catch (e) {
+      toast(e.message || 'PDF export failed', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  }
+
+  // ===== Excel Import (.xlsx / .xls) =====
+  // Reads the workbook client-side with SheetJS, matches columns to module
+  // fields by Label (case-insensitive), then creates records one by one
+  // through the normal POST /records/:moduleKey endpoint — so every existing
+  // server-side validation rule still applies exactly as it does for manual
+  // entry. Reference/user_select columns are matched by their display label
+  // against the already-loaded refCache/usersCache lookups.
+  async function importExcelRecords(file) {
+    if (!file) return;
+    const input = document.getElementById('importExcelFile');
+    const btn = document.getElementById('importExcelBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Reading file...';
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!rows.length) { toast('No rows found in file', 'error'); return; }
+
+      const cols = excelColumns();
+      const labelToField = {};
+      cols.forEach(f => { labelToField[f.Label.trim().toLowerCase()] = f; });
+
+      const reverseRef = {}; // refModule -> { lowerLabel: id }
+      Object.entries(refCache).forEach(([mod, map]) => {
+        reverseRef[mod] = {};
+        Object.entries(map).forEach(([id, label]) => { reverseRef[mod][String(label).toLowerCase()] = id; });
+      });
+      const reverseUsers = {};
+      Object.entries(usersCache).forEach(([id, label]) => { reverseUsers[String(label).toLowerCase()] = id; });
+
+      let ok = 0, failed = 0;
+      const errors = [];
+      btn.textContent = 'Importing 0/' + rows.length + '...';
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const fields = {};
+        Object.keys(row).forEach(colName => {
+          const f = labelToField[String(colName).trim().toLowerCase()];
+          if (!f) return;
+          let val = row[colName];
+          if (val === '' || val === undefined || val === null) return;
+          if (f.FieldType === 'reference') {
+            const refModule = f.Config?.refModule;
+            const match = refModule && reverseRef[refModule] ? reverseRef[refModule][String(val).toLowerCase()] : null;
+            if (match) fields[f.FieldKey] = match;
+          } else if (f.FieldType === 'user_select') {
+            const match = reverseUsers[String(val).toLowerCase()];
+            if (match) fields[f.FieldKey] = match;
+          } else if (f.FieldType === 'checkbox') {
+            fields[f.FieldKey] = /^(yes|true|1)$/i.test(String(val).trim());
+          } else if (f.FieldType === 'multiselect') {
+            fields[f.FieldKey] = String(val).split(',').map(s => s.trim()).filter(Boolean);
+          } else {
+            fields[f.FieldKey] = val;
+          }
+        });
+
+        const statusRaw = row['Status'] || row['status'] || '';
+        const primaryField = cols[0];
+        const title = fields[primaryField?.FieldKey] || '';
+        const payload = { title, status: String(statusRaw).trim(), fields };
+
+        try {
+          await api('/records/' + moduleKey, { method: 'POST', body: payload });
+          ok++;
+        } catch (e) {
+          failed++;
+          errors.push('Row ' + (i + 2) + ': ' + (e.message || 'failed'));
+        }
+        btn.textContent = 'Importing ' + (i + 1) + '/' + rows.length + '...';
+      }
+
+      if (failed) {
+        console.warn('Import errors:', errors);
+        toast(ok + ' imported, ' + failed + ' failed (see console)', failed === rows.length ? 'error' : 'info');
+      } else {
+        toast('Imported ' + ok + ' record(s)', 'success');
+      }
+      load();
+    } catch (e) {
+      toast(e.message || 'Excel import failed', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+      input.value = '';
+    }
+  }
+
+  function buildFormFields(values = {}, isNew = false) {
+    const sorted = [...moduleDef.fields].sort((a,b) => a.SortOrder - b.SortOrder);
+    return sorted.map(f => {
+      const cfg = f.Config || {};
+      // On a brand-new record, pre-fill the field's configured default value if one was set.
+      let val = values[f.FieldKey] ?? (isNew && cfg.defaultValue !== undefined ? cfg.defaultValue : '');
+      const req = f.IsRequired ? 'required' : '';
+      const key = esc(f.FieldKey);
+      const placeholder = cfg.placeholder ? `placeholder="${esc(cfg.placeholder)}"` : '';
+      let input = '';
+      if (f.FieldType === 'textarea') {
+        const maxlen = cfg.maxLength ? `maxlength="${cfg.maxLength}"` : '';
+        input = `<textarea class="textarea" rows="3" data-field="${key}" ${req} ${placeholder} ${maxlen}>${esc(val)}</textarea>`;
+      } else if (f.FieldType === 'select') {
+        const opts = f.Options || [];
+        input = `<select class="select" data-field="${key}" ${req}>
+          <option value="">Select...</option>
+          ${opts.map(o => `<option value="${esc(o)}" ${o===val?'selected':''}>${esc(o)}</option>`).join('')}
+        </select>`;
+      } else if (f.FieldType === 'multiselect') {
+        const opts = f.Options || [];
+        const chosen = Array.isArray(val) ? val : (val ? [val] : []);
+        input = `<select class="select" data-field="${key}" data-multi="1" multiple size="${Math.min(6, Math.max(3, opts.length))}">
+          ${opts.map(o => `<option value="${esc(o)}" ${chosen.includes(o)?'selected':''}>${esc(o)}</option>`).join('')}
+        </select>`;
+      } else if (f.FieldType === 'checkbox') {
+        input = `<label class="checkbox-row"><input type="checkbox" data-field="${key}" ${val?'checked':''}> <span>${esc(f.Label)}</span></label>`;
+      } else if (f.FieldType === 'reference') {
+        const refModule = cfg.refModule;
+        const opts = refModule && refCache[refModule] ? refCache[refModule] : {};
+        input = `<select class="select" data-field="${key}" data-reftype="1" ${req}>
+          <option value="">Select...</option>
+          ${Object.entries(opts).map(([id, label]) => `<option value="${id}" ${String(val)===String(id)?'selected':''}>${esc(label)}</option>`).join('')}
+        </select>`;
+      } else if (f.FieldType === 'user_select') {
+        input = `<select class="select" data-field="${key}" data-reftype="1" ${req}>
+          <option value="">Select...</option>
+          ${Object.entries(usersCache).map(([id, label]) => `<option value="${id}" ${String(val)===String(id)?'selected':''}>${esc(label)}</option>`).join('')}
+        </select>`;
+      } else {
+        const htmlType = ({email:'email',phone:'tel',number:'number',decimal:'number',currency:'number',date:'date',datetime:'datetime-local',url:'url'})[f.FieldType] || 'text';
+        const step = f.FieldType === 'currency' || f.FieldType === 'decimal' ? `step="${cfg.decimals !== undefined ? (1/Math.pow(10,cfg.decimals)).toFixed(cfg.decimals) : '0.01'}"` : (f.FieldType === 'number' ? 'step="1"' : '');
+        const min = cfg.min !== undefined ? `min="${cfg.min}"` : '';
+        const max = cfg.max !== undefined ? `max="${cfg.max}"` : '';
+        const affixOpen = cfg.prefix ? `<div style="display:flex;align-items:center;gap:6px;"><span style="color:var(--ink-faint);white-space:nowrap;">${esc(cfg.prefix)}</span>` : '';
+        const affixClose = cfg.suffix ? `<span style="color:var(--ink-faint);white-space:nowrap;">${esc(cfg.suffix)}</span></div>` : (cfg.prefix ? `</div>` : '');
+        const box = `<input class="input" type="${htmlType}" ${step} ${min} ${max} ${placeholder} data-field="${key}" value="${esc(val)}" ${req}>`;
+        input = (cfg.prefix || cfg.suffix) ? `${affixOpen}${box}${affixClose}` : box;
+      }
+      const help = cfg.helpText ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;">${esc(cfg.helpText)}</div>` : '';
+      // Generic convenience: any module with a gps_latitude/gps_longitude
+      // field pair (e.g. Field Visits) gets a one-tap "use my location"
+      // button right under latitude, instead of everyone hand-typing
+      // coordinates off a phone's maps app.
+      const gpsBtn = f.FieldKey === 'gps_latitude'
+        ? `<button type="button" class="btn btn-outline btn-sm" style="margin-top:6px;" onclick="captureGpsLocation(this)">📍 Use my current location</button>`
+        : '';
+      return `<div class="field">${f.FieldType!=='checkbox' ? `<label class="label">${esc(f.Label)}${f.IsRequired?' *':''}</label>` : ''}${input}${help}${gpsBtn}</div>`;
+    }).join('');
+  }
+
+  // Fills the gps_latitude / gps_longitude inputs of the form this button
+  // lives in using the browser's Geolocation API. Scoped to the closest
+  // .modal-body so it works no matter which module/modal it's rendered in.
+  function captureGpsLocation(btn) {
+    if (!navigator.geolocation) { toast('Geolocation is not supported by this browser', 'error'); return; }
+    const scope = btn.closest('.modal-body') || document;
+    const latEl = scope.querySelector('[data-field="gps_latitude"]');
+    const lngEl = scope.querySelector('[data-field="gps_longitude"]');
+    if (!latEl || !lngEl) return;
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Locating...';
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        latEl.value = pos.coords.latitude.toFixed(6);
+        lngEl.value = pos.coords.longitude.toFixed(6);
+        toast('Location captured', 'success');
+        btn.disabled = false; btn.textContent = original;
+      },
+      (err) => {
+        toast('Could not get location: ' + (err.message || 'permission denied'), 'error');
+        btn.disabled = false; btn.textContent = original;
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
+  function openRecordModal() {
+    document.getElementById('recModalTitle').textContent = 'New ' + moduleDef.Label;
+    document.getElementById('dynamicFormArea').innerHTML = `
+      <input type="hidden" id="rec_id">
+      <div class="field"><label class="label">Status</label>
+        <select class="select" id="rec_status">
+          <option value="">—</option>
+          <option value="New">New</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Completed">Completed</option>
+        </select>
+      </div>
+      ${buildFormFields({}, true)}
+    `;
+    document.getElementById('recModalOverlay').classList.remove('hidden');
+  }
+  function closeRecordModal(){ document.getElementById('recModalOverlay').classList.add('hidden'); }
+
+  function editRecord(id) {
+    const r = records.find(x => x.recordId === id);
+    document.getElementById('recModalTitle').textContent = 'Edit ' + moduleDef.Label;
+    document.getElementById('dynamicFormArea').innerHTML = `
+      <input type="hidden" id="rec_id" value="${id}">
+      <div class="field"><label class="label">Status</label>
+        <select class="select" id="rec_status">
+          <option value="">—</option>
+          <option value="New" ${r.status==='New'?'selected':''}>New</option>
+          <option value="In Progress" ${r.status==='In Progress'?'selected':''}>In Progress</option>
+          <option value="Completed" ${r.status==='Completed'?'selected':''}>Completed</option>
+        </select>
+      </div>
+      ${buildFormFields(r.fields)}
+    `;
+    document.getElementById('recModalOverlay').classList.remove('hidden');
+  }
+
+  async function saveRecord() {
+    const btn = document.querySelector('#recModalOverlay .btn-primary');
+    if (btn.disabled) return;
+    const id = document.getElementById('rec_id').value;
+    const existing = id ? (records.find(x => x.recordId === Number(id))?.fields || {}) : {};
+    const fields = { ...existing };
+    document.querySelectorAll('[data-field]').forEach(el => {
+      if (el.type === 'checkbox') fields[el.dataset.field] = el.checked;
+      else if (el.dataset.multi) fields[el.dataset.field] = Array.from(el.selectedOptions).map(o => o.value);
+      else fields[el.dataset.field] = el.value;
+    });
+    const primaryField = moduleDef.fields.sort((a,b)=>a.SortOrder-b.SortOrder)[0];
+    const title = fields[primaryField?.FieldKey] || '';
+    const payload = { title, status: document.getElementById('rec_status').value, fields };
+
+    btn.disabled = true;
+    try {
+      if (id) { await api('/records/single/' + id, { method: 'PUT', body: payload }); toast('Record updated', 'success'); }
+      else { await api('/records/' + moduleKey, { method: 'POST', body: payload }); toast('Record created', 'success'); }
+      closeRecordModal(); load();
+    } catch (e) { showFormErrors(e); }
+    finally { btn.disabled = false; }
+  }
+
+  function showFormErrors(e) {
+    document.querySelectorAll('.field-error').forEach(el => el.remove());
+    document.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+    const errors = e.errors || {};
+    let firstMsg = e.message;
+    let matched = false;
+    Object.entries(errors).forEach(([key, msg]) => {
+      const el = document.querySelector(`[data-field="${key}"]`);
+      if (el) {
+        matched = true;
+        el.classList.add('input-error');
+        const hint = document.createElement('div');
+        hint.className = 'field-error';
+        hint.textContent = msg;
+        el.insertAdjacentElement('afterend', hint);
+      }
+    });
+    toast(matched ? 'Please fix the highlighted fields' : firstMsg, 'error');
+  }
+
+  async function deleteRecord(id) {
+    if (!confirm('Delete this record?')) return;
+    try { await api('/records/single/' + id, { method: 'DELETE' }); toast('Record deleted', 'success'); load(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+
+  load();
+</script>
+</body>
+</html>

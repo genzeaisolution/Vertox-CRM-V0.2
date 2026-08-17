@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ur" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Financial Ledger — Vertox CRM</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<script src="js/api.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/layout.js"></script>
+<script>
+  requireAuthPage();
+  renderLayout('ledger', 'Financial Ledger', 'Track grants, income & expenses across multiple currencies');
+</script>
+
+<template id="tpl">
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="entries" onclick="switchTab('entries')">Ledger Entries</button>
+    <button class="tab-btn" data-tab="currencies" onclick="switchTab('currencies')">Currencies</button>
+  </div>
+
+  <div id="summaryGrid" class="stat-grid"></div>
+
+  <!-- ===== Entries tab ===== -->
+  <div id="tab-entries">
+    <div class="toolbar">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input class="input" type="date" id="fFrom" title="From date" style="width:150px;">
+        <span style="color:var(--ink-faint);font-size:12.5px;">to</span>
+        <input class="input" type="date" id="fTo" title="To date" style="width:150px;">
+        <select class="select" id="fCurrency" style="width:140px;"><option value="">All currencies</option></select>
+        <select class="select" id="fType" style="width:140px;">
+          <option value="">All types</option>
+          <option value="grant">Grant</option>
+          <option value="income">Income</option>
+          <option value="expense">Expense</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadEntries()">Apply</button>
+        <button class="btn btn-outline btn-sm" onclick="clearEntryFilters()">Clear</button>
+      </div>
+      <button class="btn btn-primary" id="newEntryBtn" onclick="openEntryModal()">+ New Entry</button>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Type</th><th>Description</th><th>Reference</th><th>Amount</th><th>Base Amount</th><th>Recorded By</th><th></th></tr>
+        </thead>
+        <tbody id="entriesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== Currencies tab ===== -->
+  <div id="tab-currencies" class="hidden">
+    <div class="toolbar">
+      <div class="page-sub" style="font-size:12.5px;color:var(--ink-soft);">
+        One currency is the system Base Currency (rate locked at 1). Every other currency's rate says how many base-currency units one unit of it is worth.
+      </div>
+      <button class="btn btn-primary" id="newCurrencyBtn" onclick="openCurrencyModal()">+ Add Currency</button>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Code</th><th>Name</th><th>Symbol</th><th>Rate to Base</th><th></th><th></th></tr></thead>
+        <tbody id="currenciesBody"></tbody>
+      </table>
+    </div>
+  </div>
+</template>
+
+<!-- Entry modal -->
+<div class="modal-overlay hidden" id="entryModalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="entryModalTitle">New Ledger Entry</div>
+      <button class="close-x" onclick="closeEntryModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="e_id">
+      <div class="field"><label class="label">Entry Date *</label><input class="input" type="date" id="e_date" data-field="entryDate"></div>
+      <div class="field"><label class="label">Type *</label>
+        <select class="select" id="e_type" data-field="entryType">
+          <option value="grant">Grant</option>
+          <option value="income">Income</option>
+          <option value="expense">Expense</option>
+        </select>
+      </div>
+      <div class="field"><label class="label">Description *</label><input class="input" id="e_desc" data-field="description" placeholder="e.g. USAID education grant — tranche 1"></div>
+      <div class="field"><label class="label">Reference</label><input class="input" id="e_ref" data-field="reference" placeholder="Donor / grant reference (optional)"></div>
+      <div class="field"><label class="label">Currency *</label><select class="select" id="e_currency" data-field="currencyCode"></select></div>
+      <div class="field"><label class="label">Amount *</label><input class="input" type="number" step="0.01" id="e_amount" data-field="amount"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeEntryModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEntry()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Currency modal -->
+<div class="modal-overlay hidden" id="currencyModalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="currencyModalTitle">Add Currency</div>
+      <button class="close-x" onclick="closeCurrencyModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="c_code_original">
+      <div class="field"><label class="label">Currency Code *</label><input class="input" id="c_code" data-field="currencyCode" maxlength="3" placeholder="EUR" style="text-transform:uppercase;"></div>
+      <div class="field"><label class="label">Currency Name *</label><input class="input" id="c_name" data-field="currencyName" placeholder="Euro"></div>
+      <div class="field"><label class="label">Symbol</label><input class="input" id="c_symbol" data-field="symbol" placeholder="€"></div>
+      <div class="field"><label class="label">Exchange Rate to Base *</label><input class="input" type="number" step="0.000001" id="c_rate" data-field="exchangeRateToBase"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeCurrencyModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCurrency()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('pageContent').innerHTML = document.getElementById('tpl').innerHTML;
+
+  const user = Store.user || {};
+  const perms = user.permissions || [];
+  const canManage = user.role === 'SuperAdmin' || perms.includes('ledger.manage');
+  if (!canManage) {
+    document.getElementById('newEntryBtn')?.classList.add('hidden');
+    document.getElementById('newCurrencyBtn')?.classList.add('hidden');
+  }
+
+  let currencies = [];
+  let entries = [];
+  let baseCurrency = 'USD';
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('tab-entries').classList.toggle('hidden', tab !== 'entries');
+    document.getElementById('tab-currencies').classList.toggle('hidden', tab !== 'currencies');
+  }
+
+  function moneyFmt(amount, code) {
+    if (amount === undefined || amount === null) return '—';
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency: code || 'USD', maximumFractionDigits: 2 }).format(Number(amount));
+    } catch (e) {
+      return Number(amount).toFixed(2) + ' ' + (code || '');
+    }
+  }
+
+  async function loadCurrencies() {
+    currencies = await api('/ledger/currencies');
+    baseCurrency = currencies.find(c => c.IsBase)?.CurrencyCode || 'USD';
+    document.querySelector('#tab-entries th:nth-child(6)').textContent = 'Base (' + baseCurrency + ')';
+
+    const filterSel = document.getElementById('fCurrency');
+    filterSel.innerHTML = `<option value="">All currencies</option>` + currencies.map(c => `<option value="${esc(c.CurrencyCode)}">${esc(c.CurrencyCode)}</option>`).join('');
+
+    const entrySel = document.getElementById('e_currency');
+    entrySel.innerHTML = currencies.map(c => `<option value="${esc(c.CurrencyCode)}">${esc(c.CurrencyCode)} — ${esc(c.CurrencyName)}</option>`).join('');
+
+    const body = document.getElementById('currenciesBody');
+    if (currencies.length === 0) {
+      body.innerHTML = `<tr><td colspan="6" class="empty">No currencies yet</td></tr>`;
+      return;
+    }
+    body.innerHTML = currencies.map(c => `
+      <tr>
+        <td><strong>${esc(c.CurrencyCode)}</strong> ${c.IsBase ? '<span class="tag">Base</span>' : ''}</td>
+        <td>${esc(c.CurrencyName)}</td>
+        <td>${esc(c.Symbol) || '—'}</td>
+        <td>${Number(c.ExchangeRateToBase).toFixed(6)}</td>
+        <td style="text-align:right;">${canManage ? `<button class="btn btn-outline btn-sm" onclick='editCurrency("${c.CurrencyCode}")'>Edit</button>` : ''}</td>
+        <td style="text-align:right;">${canManage && !c.IsBase ? `<button class="btn btn-danger btn-sm" onclick="deleteCurrency('${c.CurrencyCode}')">Delete</button>` : ''}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadSummary() {
+    try {
+      const summary = await api('/ledger/summary');
+      baseCurrency = summary.baseCurrency || baseCurrency;
+      const totalsByCurrency = {};
+      let netBase = 0;
+      summary.byCurrency.forEach(row => {
+        totalsByCurrency[row.CurrencyCode] = totalsByCurrency[row.CurrencyCode] || { in: 0, out: 0, symbol: row.Symbol, name: row.CurrencyName };
+        if (row.EntryType === 'expense') totalsByCurrency[row.CurrencyCode].out += row.total;
+        else totalsByCurrency[row.CurrencyCode].in += row.total;
+        netBase += (row.EntryType === 'expense' ? -1 : 1) * Number(row.totalBase);
+      });
+
+      let html = `<div class="stat-card"><div class="stat-num">${moneyFmt(netBase, baseCurrency)}</div><div class="stat-label">Net position (in ${baseCurrency})</div></div>`;
+      Object.entries(totalsByCurrency).forEach(([code, t]) => {
+        html += `<div class="stat-card"><div class="stat-num">${moneyFmt(t.in - t.out, code)}</div><div class="stat-label">Net in ${code}</div></div>`;
+      });
+      if (Object.keys(totalsByCurrency).length === 0) {
+        html += `<div class="stat-card"><div class="stat-num">—</div><div class="stat-label">No ledger activity yet</div></div>`;
+      }
+      document.getElementById('summaryGrid').innerHTML = html;
+    } catch (e) { /* non-critical widget */ }
+  }
+
+  function clearEntryFilters() {
+    document.getElementById('fFrom').value = '';
+    document.getElementById('fTo').value = '';
+    document.getElementById('fCurrency').value = '';
+    document.getElementById('fType').value = '';
+    loadEntries();
+  }
+
+  async function loadEntries() {
+    try {
+      const params = {};
+      const from = document.getElementById('fFrom').value; if (from) params.from = from;
+      const to = document.getElementById('fTo').value; if (to) params.to = to;
+      const currency = document.getElementById('fCurrency').value; if (currency) params.currency = currency;
+      const type = document.getElementById('fType').value; if (type) params.type = type;
+      const qs = new URLSearchParams(params).toString();
+
+      entries = await api('/ledger/entries' + (qs ? '?' + qs : ''));
+      const body = document.getElementById('entriesBody');
+      if (entries.length === 0) {
+        body.innerHTML = `<tr><td colspan="8" class="empty">No ledger entries yet</td></tr>`;
+        return;
+      }
+      body.innerHTML = entries.map(e => `
+        <tr>
+          <td>${new Date(e.EntryDate).toLocaleDateString()}</td>
+          <td><span class="badge ${e.EntryType === 'expense' ? 'badge-red' : e.EntryType === 'grant' ? 'badge-blue' : 'badge-green'}">${esc(e.EntryType)}</span></td>
+          <td>${esc(e.Description)}</td>
+          <td>${esc(e.Reference) || '—'}</td>
+          <td>${moneyFmt(e.Amount, e.CurrencyCode)}</td>
+          <td>${moneyFmt(e.AmountBase, baseCurrency)}</td>
+          <td>${esc(e.CreatedByName) || '—'}</td>
+          <td style="text-align:right;">
+            ${canManage ? `<button class="btn btn-outline btn-sm" onclick="editEntry(${e.EntryId})">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteEntry(${e.EntryId})">Delete</button>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+  function openEntryModal() {
+    document.getElementById('entryModalTitle').textContent = 'New Ledger Entry';
+    document.getElementById('e_id').value = '';
+    document.getElementById('e_date').value = todayStr();
+    document.getElementById('e_type').value = 'grant';
+    document.getElementById('e_desc').value = '';
+    document.getElementById('e_ref').value = '';
+    document.getElementById('e_currency').value = baseCurrency;
+    document.getElementById('e_amount').value = '';
+    document.getElementById('entryModalOverlay').classList.remove('hidden');
+  }
+  function closeEntryModal() { document.getElementById('entryModalOverlay').classList.add('hidden'); }
+
+  function editEntry(id) {
+    const e = entries.find(x => x.EntryId === id);
+    if (!e) return;
+    document.getElementById('entryModalTitle').textContent = 'Edit Ledger Entry';
+    document.getElementById('e_id').value = e.EntryId;
+    document.getElementById('e_date').value = new Date(e.EntryDate).toISOString().slice(0, 10);
+    document.getElementById('e_type').value = e.EntryType;
+    document.getElementById('e_desc').value = e.Description;
+    document.getElementById('e_ref').value = e.Reference || '';
+    document.getElementById('e_currency').value = e.CurrencyCode;
+    document.getElementById('e_amount').value = e.Amount;
+    document.getElementById('entryModalOverlay').classList.remove('hidden');
+  }
+
+  async function saveEntry() {
+    const id = document.getElementById('e_id').value;
+    const btn = document.querySelector('#entryModalOverlay .btn-primary');
+    if (btn.disabled) return;
+    const payload = {
+      entryDate: document.getElementById('e_date').value,
+      entryType: document.getElementById('e_type').value,
+      description: document.getElementById('e_desc').value.trim(),
+      reference: document.getElementById('e_ref').value.trim(),
+      currencyCode: document.getElementById('e_currency').value,
+      amount: document.getElementById('e_amount').value
+    };
+    btn.disabled = true;
+    try {
+      if (id) { await api('/ledger/entries/' + id, { method: 'PUT', body: payload }); toast('Entry updated', 'success'); }
+      else { await api('/ledger/entries', { method: 'POST', body: payload }); toast('Entry recorded', 'success'); }
+      closeEntryModal(); loadEntries(); loadSummary();
+    } catch (e) { showFormErrors(e); }
+    finally { btn.disabled = false; }
+  }
+
+  async function deleteEntry(id) {
+    if (!confirm('Delete this ledger entry?')) return;
+    try { await api('/ledger/entries/' + id, { method: 'DELETE' }); toast('Entry deleted', 'success'); loadEntries(); loadSummary(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+
+  function openCurrencyModal() {
+    document.getElementById('currencyModalTitle').textContent = 'Add Currency';
+    document.getElementById('c_code_original').value = '';
+    document.getElementById('c_code').value = '';
+    document.getElementById('c_code').disabled = false;
+    document.getElementById('c_name').value = '';
+    document.getElementById('c_symbol').value = '';
+    document.getElementById('c_rate').value = '';
+    document.getElementById('c_rate').disabled = false;
+    document.getElementById('currencyModalOverlay').classList.remove('hidden');
+  }
+  function closeCurrencyModal() { document.getElementById('currencyModalOverlay').classList.add('hidden'); }
+
+  function editCurrency(code) {
+    const c = currencies.find(x => x.CurrencyCode === code);
+    if (!c) return;
+    document.getElementById('currencyModalTitle').textContent = 'Edit Currency';
+    document.getElementById('c_code_original').value = c.CurrencyCode;
+    document.getElementById('c_code').value = c.CurrencyCode;
+    document.getElementById('c_code').disabled = true;
+    document.getElementById('c_name').value = c.CurrencyName;
+    document.getElementById('c_symbol').value = c.Symbol || '';
+    document.getElementById('c_rate').value = c.ExchangeRateToBase;
+    document.getElementById('c_rate').disabled = !!c.IsBase;
+    document.getElementById('currencyModalOverlay').classList.remove('hidden');
+  }
+
+  async function saveCurrency() {
+    const original = document.getElementById('c_code_original').value;
+    const btn = document.querySelector('#currencyModalOverlay .btn-primary');
+    if (btn.disabled) return;
+    const payload = {
+      currencyCode: document.getElementById('c_code').value.trim().toUpperCase(),
+      currencyName: document.getElementById('c_name').value.trim(),
+      symbol: document.getElementById('c_symbol').value.trim(),
+      exchangeRateToBase: document.getElementById('c_rate').value
+    };
+    btn.disabled = true;
+    try {
+      if (original) { await api('/ledger/currencies/' + original, { method: 'PUT', body: payload }); toast('Currency updated', 'success'); }
+      else { await api('/ledger/currencies', { method: 'POST', body: payload }); toast('Currency added', 'success'); }
+      closeCurrencyModal(); await loadCurrencies(); loadEntries();
+    } catch (e) { showFormErrors(e); }
+    finally { btn.disabled = false; }
+  }
+
+  async function deleteCurrency(code) {
+    if (!confirm('Delete currency ' + code + '?')) return;
+    try { await api('/ledger/currencies/' + code, { method: 'DELETE' }); toast('Currency deleted', 'success'); await loadCurrencies(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+
+  function showFormErrors(e) {
+    document.querySelectorAll('.field-error').forEach(el => el.remove());
+    document.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+    const errors = e.errors || {};
+    let matched = false;
+    Object.entries(errors).forEach(([key, msg]) => {
+      const el = document.querySelector(`[data-field="${key}"]`);
+      if (el) {
+        matched = true;
+        el.classList.add('input-error');
+        const hint = document.createElement('div');
+        hint.className = 'field-error';
+        hint.textContent = msg;
+        el.insertAdjacentElement('afterend', hint);
+      }
+    });
+    toast(matched ? 'Please fix the highlighted fields' : e.message, 'error');
+  }
+
+  (async function init() {
+    await loadCurrencies();
+    await loadEntries();
+    await loadSummary();
+  })();
+</script>
+</body>
+</html>
