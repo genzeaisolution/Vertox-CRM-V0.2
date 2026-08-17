@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ur" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Vertox CRM</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+<script src="js/vendor/chart.umd.min.js"></script>
+<style>
+  .chart-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:24px;}
+  .chart-card{height:280px;}
+  .chart-card canvas{max-height:220px;cursor:pointer;}
+  @media(max-width:900px){.chart-grid{grid-template-columns:1fr;}}
+  .range-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+  .range-custom{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .range-custom .input{width:145px;}
+  .module-chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;}
+  .module-mini-card{border:1px solid var(--line);border-radius:10px;padding:12px;}
+  .module-mini-card .mini-title{font-weight:700;font-size:13px;margin-bottom:8px;color:var(--blue-800);}
+  .module-mini-card canvas{max-height:130px;}
+</style>
+</head>
+<body>
+<script src="js/api.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/layout.js"></script>
+<script>
+  requireAuthPage();
+  renderLayout('dashboard', 'Dashboard', 'Overview of your CRM activity');
+</script>
+
+<template id="tpl">
+  <div class="range-toolbar">
+    <div class="pill-group" id="presetGroup">
+      <button class="pill-btn" data-days="7">Last 7 days</button>
+      <button class="pill-btn active" data-days="30">Last 30 days</button>
+      <button class="pill-btn" data-days="90">Last 90 days</button>
+      <button class="pill-btn" data-days="0">All time</button>
+    </div>
+    <div class="range-custom">
+      <input class="input" type="date" id="customFrom" title="From date">
+      <span style="color:var(--ink-faint);font-size:12.5px;">to</span>
+      <input class="input" type="date" id="customTo" title="To date">
+      <button class="btn btn-outline btn-sm" onclick="applyCustomRange()">Apply</button>
+    </div>
+  </div>
+
+  <div class="stat-grid" id="statGrid"></div>
+  <div class="stat-grid" id="opsGrid"></div>
+
+  <!-- Generic, module-agnostic "what's due soon" list: any date/datetime
+       field on any module (deadlines, due dates, event dates, payment
+       dates...) that falls in the next 14 days shows up here automatically. -->
+  <div class="card card-pad" style="margin-bottom:18px;">
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px;">Upcoming (next 14 days)</div>
+    <div id="upcomingList"></div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="card card-pad chart-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:700;font-size:15px;">Records per Module</div>
+        <div class="chart-click-hint">Click a bar for details</div>
+      </div>
+      <canvas id="moduleChart"></canvas>
+    </div>
+    <div class="card card-pad chart-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:700;font-size:15px;">Records by Status</div>
+        <div class="chart-click-hint">Click a slice for details</div>
+      </div>
+      <canvas id="statusChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Service Level: what share of everything in the system is actually
+       Completed vs still open/in-progress — a single, module-agnostic
+       health indicator for the whole org, not just one module. -->
+  <div class="chart-grid" style="grid-template-columns:1fr 1.4fr;">
+    <div class="card card-pad chart-card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;">Service Level</div>
+      <canvas id="serviceLevelChart"></canvas>
+    </div>
+    <div class="card card-pad" style="display:flex;flex-direction:column;justify-content:center;gap:10px;">
+      <div id="serviceLevelStats" class="stat-grid" style="margin-bottom:0;"></div>
+    </div>
+  </div>
+
+  <div class="card card-pad chart-card" style="margin-bottom:24px;">
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px;">Activity Trend</div>
+    <canvas id="trendChart"></canvas>
+  </div>
+
+  <!-- One small breakdown chart per module — status split for that module
+       specifically, generated from live data, never hard-coded to a fixed
+       list of modules. -->
+  <div class="card card-pad" style="margin-bottom:24px;">
+    <div style="font-weight:700;font-size:15px;margin-bottom:14px;">Breakdown by Module</div>
+    <div class="module-chart-grid" id="perModuleCharts"></div>
+  </div>
+
+  <div class="card card-pad">
+    <div style="font-weight:700;font-size:15px;margin-bottom:14px;">Recent Records</div>
+    <table>
+      <thead><tr><th>Title</th><th>Module</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody id="recentBody"></tbody>
+    </table>
+  </div>
+</template>
+
+<div class="modal-overlay hidden" id="drillModalOverlay">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <div class="modal-title" id="drillModalTitle">Records</div>
+      <button class="close-x" onclick="closeDrillModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead><tr><th>Title</th><th>Module</th><th>Status</th><th>Owner</th><th>Created</th></tr></thead>
+        <tbody id="drillBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeDrillModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('pageContent').innerHTML = document.getElementById('tpl').innerHTML;
+
+  const CHART_COLORS = ['#1B63C4','#2E7AE6','#5EA1FF','#0F3D74','#1C9C6E','#DB9A1F','#D64545','#7C97C4'];
+
+  // ---- Date range state ----
+  // selectedDays: 7/30/90 drives the trend chart's window; 0 means "all time".
+  // customFrom/customTo (YYYY-MM-DD) scope the stat cards, module chart,
+  // status chart and recent list when the user picks an explicit range.
+  let selectedDays = 30;
+  let customFrom = '', customTo = '';
+  let moduleChartRef = null, statusChartRef = null, trendChartRef = null;
+  let currentModules = [], currentStatusTotals = {};
+
+  function activeRangeParams() {
+    if (customFrom || customTo) {
+      const p = {};
+      if (customFrom) p.from = customFrom;
+      if (customTo) p.to = customTo;
+      return p;
+    }
+    if (selectedDays > 0) {
+      const from = new Date();
+      from.setDate(from.getDate() - selectedDays);
+      return { from: from.toISOString().slice(0, 10) };
+    }
+    return {};
+  }
+
+  function toQuery(params) {
+    const qs = new URLSearchParams(params).toString();
+    return qs ? '?' + qs : '';
+  }
+
+  function selectPreset(days) {
+    selectedDays = days;
+    customFrom = ''; customTo = '';
+    document.getElementById('customFrom').value = '';
+    document.getElementById('customTo').value = '';
+    document.querySelectorAll('#presetGroup .pill-btn').forEach(b => {
+      b.classList.toggle('active', Number(b.dataset.days) === days);
+    });
+    load();
+  }
+
+  function applyCustomRange() {
+    customFrom = document.getElementById('customFrom').value;
+    customTo = document.getElementById('customTo').value;
+    if (!customFrom && !customTo) { toast('Pick at least one date', 'error'); return; }
+    document.querySelectorAll('#presetGroup .pill-btn').forEach(b => b.classList.remove('active'));
+    load();
+  }
+
+  document.getElementById('presetGroup').addEventListener('click', (e) => {
+    const btn = e.target.closest('.pill-btn');
+    if (btn) selectPreset(Number(btn.dataset.days));
+  });
+
+  async function load() {
+    try {
+      const range = activeRangeParams();
+      const stats = await api('/settings/dashboard/stats' + toQuery(range));
+      const totalRecords = stats.modules.reduce((s, m) => s + m.total, 0);
+      currentModules = stats.modules;
+
+      const grid = document.getElementById('statGrid');
+      let html = `
+        <div class="stat-card accent-blue"><div class="stat-icon">${icon('users')}</div><div class="stat-body"><div class="stat-num">${stats.totalUsers}</div><div class="stat-label">Total Users</div></div></div>
+        <div class="stat-card accent-blue"><div class="stat-icon">${icon('file')}</div><div class="stat-body"><div class="stat-num">${totalRecords}</div><div class="stat-label">Records in range</div></div></div>
+      `;
+      const moduleIcons = { contacts:'user', leads:'target', deals:'briefcase', beneficiaries:'users', donors:'heart', donations:'gift', volunteers:'hand', projects:'folder', events:'calendar', grants:'award', cases:'clipboard', staff:'user', payroll:'wallet', inventory:'box', partners:'handshake', complaints:'alert', training:'book', campaigns:'megaphone', governance:'landmark' };
+      stats.modules.forEach(m => {
+        const ic = moduleIcons[m.ModuleKey] || 'folder';
+        html += `<div class="stat-card accent-blue"><div class="stat-icon">${icon(ic)}</div><div class="stat-body"><div class="stat-num">${m.total}</div><div class="stat-label">${esc(m.Label)}</div></div></div>`;
+      });
+      grid.innerHTML = html;
+      await renderOpsWidgets();
+
+      const body = document.getElementById('recentBody');
+      if (stats.recentRecords.length === 0) {
+        body.innerHTML = `<tr><td colspan="4" class="empty">No records in this range</td></tr>`;
+      } else {
+        body.innerHTML = stats.recentRecords.map(r => `
+          <tr>
+            <td>${esc(r.Title) || '—'}</td>
+            <td><span class="badge badge-blue">${esc(r.ModuleLabel)}</span></td>
+            <td>${r.Status ? `<span class="badge badge-gray">${esc(r.Status)}</span>` : '—'}</td>
+            <td>${new Date(r.CreatedAt).toLocaleDateString()}</td>
+          </tr>
+        `).join('');
+      }
+
+      renderModuleChart(stats.modules);
+      await renderStatusChart(range);
+      await renderTrendChart();
+      await renderServiceLevelAndModuleBreakdowns(range);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  let serviceLevelChartRef = null;
+  let perModuleChartRefs = [];
+
+  // Pulls one grouped query (moduleKey + status + count) and derives BOTH
+  // the org-wide "Service Level" completion rate AND a small per-module
+  // status-breakdown chart from the same response — one network call powers
+  // both widgets instead of N+1 calls per module.
+  async function renderServiceLevelAndModuleBreakdowns(range) {
+    try {
+      const rows = await api('/reports/summary' + toQuery(range));
+      // { moduleKey: { label, statuses: {status: count}, total } }
+      const byModule = {};
+      let totalAll = 0, totalCompleted = 0;
+      rows.forEach(r => {
+        const key = r.ModuleKey;
+        if (!byModule[key]) byModule[key] = { label: r.Label, statuses: {}, total: 0 };
+        const status = r.Status || 'Unspecified';
+        byModule[key].statuses[status] = (byModule[key].statuses[status] || 0) + r.total;
+        byModule[key].total += r.total;
+        totalAll += r.total;
+        if (status === 'Completed') totalCompleted += r.total;
+      });
+
+      // ---- Service Level ----
+      const pct = totalAll > 0 ? Math.round((totalCompleted / totalAll) * 100) : 0;
+      const openCount = totalAll - totalCompleted;
+      if (serviceLevelChartRef) serviceLevelChartRef.destroy();
+      serviceLevelChartRef = new Chart(document.getElementById('serviceLevelChart'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Completed', 'Open / In Progress'],
+          datasets: [{ data: [totalCompleted, openCount], backgroundColor: ['#1C9C6E', '#E4E9F2'], borderWidth: 0 }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: '72%',
+          plugins: { legend: { display: false } }
+        },
+        plugins: [{
+          id: 'centerText',
+          afterDraw(chart) {
+            const { ctx, chartArea: { width, height, left, top } } = chart;
+            ctx.save();
+            ctx.font = '700 22px Inter, sans-serif';
+            ctx.fillStyle = '#0F3D74';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(pct + '%', left + width / 2, top + height / 2);
+            ctx.restore();
+          }
+        }]
+      });
+      document.getElementById('serviceLevelStats').innerHTML = `
+        <div class="stat-card accent-green"><div class="stat-icon">${icon('check')}</div><div class="stat-body"><div class="stat-num">${totalCompleted}</div><div class="stat-label">Completed Records</div></div></div>
+        <div class="stat-card accent-amber"><div class="stat-icon">${icon('clock')}</div><div class="stat-body"><div class="stat-num">${openCount}</div><div class="stat-label">Open / In Progress</div></div></div>
+      `;
+
+      // ---- Per-module breakdown mini-charts ----
+      perModuleChartRefs.forEach(c => c.destroy());
+      perModuleChartRefs = [];
+      const wrap = document.getElementById('perModuleCharts');
+      const modKeys = Object.keys(byModule);
+      if (modKeys.length === 0) {
+        wrap.innerHTML = `<div class="empty">No records yet in this range — module breakdowns will appear as data comes in</div>`;
+        return;
+      }
+      wrap.innerHTML = modKeys.map(key => `
+        <div class="module-mini-card">
+          <div class="mini-title">${esc(byModule[key].label)} <span style="color:var(--ink-faint);font-weight:500;">(${byModule[key].total})</span></div>
+          <canvas id="modMini_${key}"></canvas>
+        </div>
+      `).join('');
+      modKeys.forEach((key, idx) => {
+        const statuses = byModule[key].statuses;
+        const chart = new Chart(document.getElementById('modMini_' + key), {
+          type: 'doughnut',
+          data: {
+            labels: Object.keys(statuses),
+            datasets: [{ data: Object.values(statuses), backgroundColor: CHART_COLORS, borderWidth: 0 }]
+          },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 8, font: { size: 10 } } } } }
+        });
+        perModuleChartRefs.push(chart);
+      });
+    } catch (e) { /* non-critical widget group */ }
+  }
+
+  // Operational widgets pulled from the newer subsystems (shifts, grant
+  // milestones, recurring-donation reminders). Each is wrapped in its own
+  // try/catch and skipped silently if the current user's role wasn't
+  // granted that permission — one missing permission shouldn't blank the
+  // rest of the dashboard.
+  async function renderOpsWidgets() {
+    const cards = [];
+    const perms = (Store.user && Store.user.permissions) || [];
+    const isAdmin = Store.user && Store.user.role === 'SuperAdmin';
+
+    if (isAdmin || perms.includes('milestones.view')) {
+      try {
+        const milestones = await api('/milestones');
+        const overdue = milestones.filter(m => m.ComputedStatus === 'Overdue').length;
+        cards.push(`<a href="milestones" class="stat-card ${overdue > 0 ? 'accent-red' : 'accent-green'}" style="text-decoration:none;">
+          <div class="stat-icon">${icon('target')}</div><div class="stat-body"><div class="stat-num">${overdue}</div><div class="stat-label">Overdue Grant Milestones</div></div></a>`);
+      } catch (e) { /* skip widget on error, rest of dashboard still renders */ }
+    }
+    if (isAdmin || perms.includes('reminders.view')) {
+      try {
+        const reminders = await api('/reminders?status=Pending');
+        cards.push(`<a href="reminders" class="stat-card ${reminders.length > 0 ? 'accent-amber' : 'accent-green'}" style="text-decoration:none;">
+          <div class="stat-icon">${icon('bell')}</div><div class="stat-body"><div class="stat-num">${reminders.length}</div><div class="stat-label">Recurring Donations Due</div></div></a>`);
+      } catch (e) { /* non-critical */ }
+    }
+    if (isAdmin || perms.includes('shifts.view')) {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const shifts = await api('/shifts?from=' + today + '&to=' + today);
+        cards.push(`<a href="shifts" class="stat-card accent-blue" style="text-decoration:none;">
+          <div class="stat-icon">${icon('calendar')}</div><div class="stat-body"><div class="stat-num">${shifts.length}</div><div class="stat-label">Volunteer Shifts Today</div></div></a>`);
+      } catch (e) { /* non-critical */ }
+    }
+    document.getElementById('opsGrid').innerHTML = cards.join('');
+  }
+
+  async function renderTrendChart() {
+    try {
+      const days = selectedDays > 0 ? selectedDays : 365;
+      const series = await api('/reports/timeseries?days=' + days);
+      const labels = series.map(p => new Date(p.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+      if (trendChartRef) trendChartRef.destroy();
+      trendChartRef = new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'New records', data: series.map(p => p.total), borderColor: '#1C9C6E', backgroundColor: 'rgba(28,156,110,.12)', fill: true, tension: 0.3, pointRadius: 2 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+    } catch (e) { /* non-critical widget */ }
+  }
+
+  function renderModuleChart(modules) {
+    if (moduleChartRef) moduleChartRef.destroy();
+    moduleChartRef = new Chart(document.getElementById('moduleChart'), {
+      type: 'bar',
+      data: {
+        labels: modules.map(m => m.Label),
+        datasets: [{ label: 'Records', data: modules.map(m => m.total), backgroundColor: CHART_COLORS[0], borderRadius: 6 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          const idx = elements[0].index;
+          const mod = currentModules[idx];
+          if (mod) openDrillDown({ moduleKey: mod.ModuleKey, title: mod.Label + ' — Records' });
+        }
+      }
+    });
+  }
+
+  async function renderStatusChart(range) {
+    try {
+      const summary = await api('/reports/summary' + toQuery(range));
+      const totals = {};
+      summary.forEach(row => {
+        const status = row.Status || 'Unspecified';
+        totals[status] = (totals[status] || 0) + row.total;
+      });
+      currentStatusTotals = totals;
+      const labels = Object.keys(totals);
+      if (statusChartRef) statusChartRef.destroy();
+      statusChartRef = new Chart(document.getElementById('statusChart'), {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data: Object.values(totals), backgroundColor: CHART_COLORS }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            const status = labels[idx];
+            openDrillDown({ status, title: status + ' — Records' });
+          }
+        }
+      });
+    } catch (e) { /* non-critical widget */ }
+  }
+
+  // ---- Drill-down modal: fetches the actual records behind a bar/slice ----
+  async function openDrillDown({ moduleKey, status, title }) {
+    document.getElementById('drillModalTitle').textContent = title;
+    document.getElementById('drillBody').innerHTML = `<tr><td colspan="5" class="empty">Loading...</td></tr>`;
+    document.getElementById('drillModalOverlay').classList.remove('hidden');
+    try {
+      const params = { ...activeRangeParams() };
+      if (moduleKey) params.moduleKey = moduleKey;
+      if (status) params.status = status;
+      const records = await api('/reports/records' + toQuery(params));
+      const body = document.getElementById('drillBody');
+      if (records.length === 0) {
+        body.innerHTML = `<tr><td colspan="5" class="empty">No records found</td></tr>`;
+        return;
+      }
+      body.innerHTML = records.map(r => `
+        <tr>
+          <td>${esc(r.Title) || '—'}</td>
+          <td><span class="badge badge-blue">${esc(r.ModuleLabel)}</span></td>
+          <td>${r.Status ? `<span class="badge badge-gray">${esc(r.Status)}</span>` : '—'}</td>
+          <td>${esc(r.OwnerName) || '—'}</td>
+          <td>${new Date(r.CreatedAt).toLocaleDateString()}</td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      document.getElementById('drillBody').innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`;
+    }
+  }
+  function closeDrillModal() { document.getElementById('drillModalOverlay').classList.add('hidden'); }
+
+  async function loadUpcoming() {
+    const box = document.getElementById('upcomingList');
+    try {
+      const items = await api('/reports/upcoming?days=14');
+      if (!items.length) { box.innerHTML = `<div class="empty" style="padding:10px 0;">Nothing due in the next 14 days</div>`; return; }
+      box.innerHTML = items.map(it => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border,#eef1f5);">
+          <div>
+            <a href="records?module=${encodeURIComponent(it.moduleKey)}" style="font-weight:600;color:var(--ink);text-decoration:none;">${esc(it.title)}</a>
+            <div style="font-size:11.5px;color:var(--ink-faint);">${esc(it.moduleLabel)} — ${esc(it.fieldLabel)}</div>
+          </div>
+          <div style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap;">${new Date(it.date).toLocaleDateString()}</div>
+        </div>
+      `).join('');
+    } catch (e) { box.innerHTML = `<div class="empty" style="padding:10px 0;">Could not load upcoming items</div>`; }
+  }
+
+  load();
+  loadUpcoming();
+</script>
+</body>
+</html>
